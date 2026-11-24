@@ -60,6 +60,7 @@ function App() {
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState('');
+  const [csrfToken, setCsrfToken] = useState('');
   const [providerState, setProviderState] = useState<'checking' | 'online' | 'offline'>('checking');
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -71,18 +72,41 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      fetch('/api/v1/models').then((response) => response.ok ? response.json() : Promise.reject()),
-      fetch('/health/live').then((response) => response.ok),
-    ])
-      .then(([modelPayload, online]) => {
+    const bootstrap = async () => {
+      try {
+        const csrfResponse = await fetch('/api/v1/auth/csrf', { credentials: 'include' });
+        if (!csrfResponse.ok) throw new Error('Could not initialize a secure session.');
+        const csrfPayload = await csrfResponse.json();
+        let token = csrfPayload.csrf_token as string;
+
+        const meResponse = await fetch('/api/v1/auth/me', { credentials: 'include' });
+        if (!meResponse.ok) {
+          const guestResponse = await fetch('/api/v1/auth/guest', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+            body: '{}',
+          });
+          if (!guestResponse.ok) throw new Error('Could not start a guest session.');
+          const guestPayload = await guestResponse.json();
+          token = guestPayload.csrf_token as string;
+        }
+
+        const [modelResponse, healthResponse] = await Promise.all([
+          fetch('/api/v1/models', { credentials: 'include' }),
+          fetch('/health/live'),
+        ]);
+        if (!modelResponse.ok || !healthResponse.ok) throw new Error('The Quanta API is unavailable.');
+        const modelPayload = await modelResponse.json();
         if (!active) return;
+        setCsrfToken(token);
         setModels(modelPayload.data ?? []);
-        setProviderState(online ? 'online' : 'offline');
-      })
-      .catch(() => {
+        setProviderState('online');
+      } catch {
         if (active) setProviderState('offline');
-      });
+      }
+    };
+    void bootstrap();
     return () => { active = false; };
   }, []);
 
@@ -110,7 +134,8 @@ function App() {
     try {
       const response = await fetch('/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({
           model,
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
@@ -270,7 +295,7 @@ function App() {
                 <Sparkles size={14} />
                 <select value={model} onChange={(event) => setModel(event.target.value)} aria-label="Select AI model">
                   <option value="auto">Auto · Best available</option>
-                  {models.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}
+                  {models.map((option) => <option value={option.id} key={option.id} disabled={option.access === 'premium'}>{option.label}{option.access === 'premium' ? ' · Premium' : ''}</option>)}
                 </select>
                 <ChevronDown size={13} />
               </div>
@@ -292,7 +317,7 @@ function App() {
                 <span className="tool-divider" />
                 <span className="composer-hint"><Command size={12} /> + Enter to send</span>
               </div>
-              <button className="send-button" onClick={() => void sendMessage()} disabled={!draft.trim() || streaming} aria-label="Send message">
+              <button className="send-button" onClick={() => void sendMessage()} disabled={!draft.trim() || streaming || !csrfToken} aria-label="Send message">
                 {streaming ? <span className="send-spinner" /> : <Send size={16} />}
               </button>
             </div>
