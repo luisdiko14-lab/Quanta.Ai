@@ -52,7 +52,9 @@ async def add_security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 
