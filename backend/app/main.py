@@ -4,20 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.api.routes import router as api_router
 from app.core.config import settings
 from app.core.redis import redis_client
+from app.db.session import engine
 
 settings.validate_runtime_secrets()
-
-engine = create_async_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-)
 
 
 @asynccontextmanager
