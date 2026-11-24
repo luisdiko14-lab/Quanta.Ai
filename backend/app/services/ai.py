@@ -94,18 +94,28 @@ def _provider_credentials(provider: str, config: Settings) -> tuple[str, str]:
     return values.get(provider, ("", ""))
 
 
-def _candidates(requested_model: str, config: Settings) -> list[ModelDefinition]:
+def _candidates(
+    requested_model: str,
+    config: Settings,
+    allow_premium: bool = False,
+) -> list[ModelDefinition]:
     available = configured_models(config)
     if requested_model == "auto":
+        eligible = [model for model in available if allow_premium or model.access == "free"]
         aliases = [item.strip() for item in config.ai_fallback_models.split(",") if item.strip()]
-        ordered = [model for alias in aliases for model in available if model.alias == alias]
-        return ordered or available
+        ordered = [model for alias in aliases for model in eligible if model.alias == alias]
+        return ordered or eligible
 
     selected = [model for model in available if model.alias == requested_model]
     if not selected:
         raise HTTPException(
             status_code=400,
             detail="That model is not configured or is currently unavailable.",
+        )
+    if selected[0].access == "premium" and not allow_premium:
+        raise HTTPException(
+            status_code=403,
+            detail="This model requires a Premium or Pro membership.",
         )
     return selected
 
@@ -143,8 +153,12 @@ def _retryable(exc: APIError) -> bool:
     )
 
 
-async def complete_chat(request: ChatRequest, config: Settings = settings) -> dict:
-    candidates = _candidates(request.model, config)
+async def complete_chat(
+    request: ChatRequest,
+    config: Settings = settings,
+    allow_premium: bool = False,
+) -> dict:
+    candidates = _candidates(request.model, config, allow_premium)
     failures: list[str] = []
 
     for model in candidates:
@@ -192,8 +206,12 @@ async def complete_chat(request: ChatRequest, config: Settings = settings) -> di
     )
 
 
-async def stream_chat(request: ChatRequest, config: Settings = settings) -> AsyncIterator[str]:
-    candidates = _candidates(request.model, config)
+async def stream_chat(
+    request: ChatRequest,
+    config: Settings = settings,
+    allow_premium: bool = False,
+) -> AsyncIterator[str]:
+    candidates = _candidates(request.model, config, allow_premium)
     failures: list[str] = []
 
     for model in candidates:
