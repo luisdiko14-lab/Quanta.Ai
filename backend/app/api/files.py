@@ -7,10 +7,11 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +45,9 @@ def _safe_filename(value: str) -> str:
 def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
     extension = Path(filename).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type: {extension or 'unknown'}")
+        raise HTTPException(
+            status_code=415, detail=f"Unsupported file type: {extension or 'unknown'}"
+        )
     if not data:
         raise HTTPException(status_code=400, detail="Empty files cannot be uploaded.")
 
@@ -56,7 +59,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
         if extension != ".zip":
             with zipfile.ZipFile(BytesIO(data)) as archive:
                 total_uncompressed = sum(info.file_size for info in archive.infolist())
-                oversized_member = any(info.file_size > 50 * 1024 * 1024 for info in archive.infolist())
+                oversized_member = any(
+                    info.file_size > 50 * 1024 * 1024 for info in archive.infolist()
+                )
                 suspicious_ratio = any(
                     info.compress_size > 0 and info.file_size / info.compress_size > 200
                     for info in archive.infolist()
@@ -67,7 +72,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
                     detail="The compressed document expands beyond the safe processing limits.",
                 )
     if extension == ".doc" and not data.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
-        raise HTTPException(status_code=400, detail="The legacy Word document signature is invalid.")
+        raise HTTPException(
+            status_code=400, detail="The legacy Word document signature is invalid."
+        )
     if extension == ".png" and not data.startswith(bytes.fromhex("89504E470D0A1A0A")):
         raise HTTPException(status_code=400, detail="The PNG signature is invalid.")
     if extension in {".jpg", ".jpeg"} and not data.startswith(bytes.fromhex("FFD8FF")):
@@ -93,7 +100,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
                 status_code=400, detail="Text and source files must use UTF-8 encoding."
             ) from exc
         if b"\x00" in data:
-            raise HTTPException(status_code=400, detail="Binary content is not accepted as a text file.")
+            raise HTTPException(
+                status_code=400, detail="Binary content is not accepted as a text file."
+            )
 
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return extension, media_type
@@ -152,7 +161,10 @@ def _extract_text(extension: str, data: bytes) -> str:
                 info.filename for info in archive.infolist()[:300]
                 if not info.is_dir()
             ]
-        text = "ZIP archive contents (files are listed only; nothing is extracted):\n" + "\n".join(entries)
+        text = (
+            "ZIP archive contents (files are listed only; nothing is extracted):\n"
+            + "\n".join(entries)
+        )
     elif extension == ".doc":
         text = (
             "Legacy .doc file received. This foundation can securely store and download it, "
@@ -165,6 +177,76 @@ def _extract_text(extension: str, data: bytes) -> str:
         )
 
     return text[:MAX_EXTRACTED_CHARS]
+
+
+def _r2_client():
+    if not all((settings.r2_account_id, settings.r2_bucket_name,
+                settings.r2_access_key_id, settings.r2_secret_access_key)):
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudflare R2 is selected but its server credentials are not configured.",
+        )
+    import boto3
+
+    endpoint = settings.r2_endpoint_url or (
+        f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
+    )
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=settings.r2_access_key_id,
+        aws_secret_access_key=settings.r2_secret_access_key,
+        region_name="auto",
+    )
+
+
+def _object_key(user_id: UUID, storage_filename: str) -> str:
+    return f"users/{user_id}/{storage_filename}"
+
+
+def _write_storage(user_id: UUID, storage_filename: str, data: bytes) -> None:
+    if settings.storage_backend.lower() == "r2":
+        _r2_client().put_object(
+            Bucket=settings.r2_bucket_name,
+            Key=_object_key(user_id, storage_filename),
+            Body=data,
+            ContentType="application/octet-stream",
+        )
+        return
+    path = _storage_path(user_id, storage_filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _read_storage(user_id: UUID, storage_filename: str) -> bytes:
+    if settings.storage_backend.lower() == "r2":
+        response = _r2_client().get_object(
+            Bucket=settings.r2_bucket_name,
+            Key=_object_key(user_id, storage_filename),
+        )
+        body = response["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
+    return _storage_path(user_id, storage_filename).read_bytes()
+
+
+def _delete_storage(user_id: UUID, storage_filename: str) -> None:
+    if settings.storage_backend.lower() == "r2":
+        _r2_client().delete_object(
+            Bucket=settings.r2_bucket_name,
+            Key=_object_key(user_id, storage_filename),
+        )
+        return
+    try:
+        _storage_path(user_id, storage_filename).unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _storage_path(user_id: UUID, storage_filename: str) -> Path:
@@ -242,15 +324,18 @@ async def upload_files(
         else settings.free_max_upload_size_mb
     ) * 1024 * 1024
 
-    user_root = (Path(settings.storage_root).resolve() / str(user_id))
-    await asyncio.to_thread(user_root.mkdir, parents=True, exist_ok=True)
-    try:
-        await asyncio.to_thread(user_root.chmod, 0o700)
-    except OSError:
-        pass
+    if settings.storage_backend.lower() == "local":
+        user_root = (Path(settings.storage_root).resolve() / str(user_id))
+        await asyncio.to_thread(user_root.mkdir, parents=True, exist_ok=True)
+        try:
+            await asyncio.to_thread(user_root.chmod, 0o700)
+        except OSError:
+            pass
+    elif settings.storage_backend.lower() != "r2":
+        raise HTTPException(status_code=500, detail="Unsupported file storage backend.")
 
     uploaded: list[dict] = []
-    written_paths: list[Path] = []
+    written_objects: list[str] = []
     try:
         for upload in files:
             filename = _safe_filename(upload.filename or "upload")
@@ -269,13 +354,8 @@ async def upload_files(
                     detail=f"{filename} could not be safely parsed.",
                 ) from exc
             storage_filename = f"{uuid.uuid4().hex}{extension}"
-            destination = _storage_path(user_id, storage_filename)
-            await asyncio.to_thread(destination.write_bytes, data)
-            written_paths.append(destination)
-            try:
-                await asyncio.to_thread(destination.chmod, 0o600)
-            except OSError:
-                pass
+            await asyncio.to_thread(_write_storage, user_id, storage_filename, data)
+            written_objects.append(storage_filename)
 
             asset = FileAsset(
                 user_id=user_id,
@@ -301,10 +381,10 @@ async def upload_files(
         await session.commit()
     except Exception:
         await session.rollback()
-        for path in written_paths:
+        for storage_filename in written_objects:
             try:
-                await asyncio.to_thread(path.unlink)
-            except FileNotFoundError:
+                await asyncio.to_thread(_delete_storage, user_id, storage_filename)
+            except Exception:
                 pass
         raise
     finally:
@@ -324,13 +404,22 @@ async def download_file(
     if not user_id:
         raise HTTPException(status_code=403, detail="Sign in to download saved files.")
     asset = await _owned_file(session, user_id, file_id)
-    path = _storage_path(user_id, asset.storage_filename)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Stored file is missing.")
-    return FileResponse(
-        path=path,
+    try:
+        data = await asyncio.to_thread(_read_storage, user_id, asset.storage_filename)
+    except Exception as exc:
+        if getattr(exc, "response", {}).get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
+            raise HTTPException(status_code=404, detail="Stored file is missing.") from exc
+        raise HTTPException(
+            status_code=503, detail="File storage is temporarily unavailable."
+        ) from exc
+    return Response(
+        content=data,
         media_type="application/octet-stream",
-        filename=asset.original_filename,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{quote(asset.original_filename)}"
+            )
+        },
     )
 
 
@@ -348,10 +437,7 @@ async def delete_file(
     if not user_id:
         raise HTTPException(status_code=403, detail="Sign in to delete saved files.")
     asset = await _owned_file(session, user_id, file_id)
-    path = _storage_path(user_id, asset.storage_filename)
+    storage_filename = asset.storage_filename
     await session.delete(asset)
     await session.commit()
-    try:
-        await asyncio.to_thread(path.unlink)
-    except FileNotFoundError:
-        pass
+    await asyncio.to_thread(_delete_storage, user_id, storage_filename)

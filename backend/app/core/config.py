@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     deepseek_model_reasoner: str = ""
 
     storage_root: str = "./storage"
+    storage_backend: str = "local"
+    r2_account_id: str = ""
+    r2_bucket_name: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_endpoint_url: str = ""
     free_max_upload_size_mb: int = 10
     premium_max_upload_size_mb: int = 50
     provider_keys_encryption_key: str = ""

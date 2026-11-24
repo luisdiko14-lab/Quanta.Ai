@@ -2,23 +2,29 @@
 
 A multi-provider AI workspace built around FastAPI, React, PostgreSQL, Redis and Docker.
 
-**Status:** Foundation, accounts and chat-history milestone. This branch includes the initial web application, provider configuration, database schema, guest sessions, email/password account endpoints, CSRF protection, persistent conversations for signed-in users, local Docker stack and CI. Billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
+**Status:** Early implementation milestone. The repository includes the initial web application, provider adapters, database schema, guest and account sessions, persistent conversations, private file uploads with local and Cloudflare R2 storage adapters, and CI/deployment configuration. Billing, administration, image OCR, malware scanning and several planned AI tools remain incomplete.
 
 ## Stack
 - API: Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy 2, Alembic
 - Web: React, TypeScript, Vite, Lucide
 - Data: PostgreSQL and Redis
+- File storage: private Cloudflare R2 (S3-compatible), with local storage retained for development
 - AI: Gemini, Groq and DeepSeek, with server-side provider adapters
 - Operations: Docker Compose, Nginx and GitHub Actions
 
 ## Run
 1. Copy `.env.example` to `.env` and set a unique `SECRET_KEY`.
-2. Configure provider keys and current model IDs in `.env`. Never add provider keys to frontend variables.
-3. Run `docker compose up --build`.
-4. Open `http://localhost:8080`; API health is proxied at `http://localhost:8080/health/ready`. The API container is internal to the Compose network.
+2. For local development, keep `STORAGE_BACKEND=local`. For cloud deployment, set `STORAGE_BACKEND=r2` and configure the R2 credentials.
+3. Configure provider keys and current model IDs in `.env`. Never add provider keys to frontend variables.
+4. Run `docker compose up --build`.
+5. Open `http://localhost:8080`; API health is proxied at `http://localhost:8080/health/ready`. The API container is internal to the Compose network.
 
 For backend development: `cd backend && pip install -e ".[dev]" && uvicorn app.main:app --reload`.
 For frontend development: run the API on port 8000, then `cd frontend && npm install && npm run dev`.
+
+## Free cloud deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel + Render + Neon + Upstash + Cloudflare R2 setup, environment variables, and free-tier limitations. A Render free service can sleep while idle; this is not 24/7 hosting.
 
 ## Provider setup
 Set model IDs only after checking the current provider catalogue:
