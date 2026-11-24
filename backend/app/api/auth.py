@@ -21,10 +21,17 @@ from app.core.sessions import (
     issue_csrf_token,
     require_csrf,
     require_identity,
+    revoke_user_sessions,
 )
 from app.db.models import User
 from app.db.session import get_db_session
-from app.schemas.auth import LoginRequest, RegisterRequest, VerifyEmailRequest
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    VerifyEmailRequest,
+)
 from app.services.email import send_email
 
 logger = logging.getLogger(__name__)
@@ -224,3 +231,70 @@ async def login(
 async def logout(request: Request, response: Response) -> dict[str, str]:
     await destroy_session(request, response)
     return {"status": "ok"}
+
+
+
+@router.post("/password/forgot", dependencies=[Depends(require_csrf), Depends(enforce_rate_limit)])
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict[str, str]:
+    email = str(payload.email).lower()
+    user = await session.scalar(select(User).where(func.lower(User.email) == email))
+
+    # Always return the same response to avoid exposing whether an email is registered.
+    if user:
+        reset_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(reset_token.encode("utf-8")).hexdigest()
+        await redis_client.set(
+            f"quanta:reset-password:{token_hash}",
+            str(user.id),
+            ex=60 * 60,
+        )
+        if settings.smtp_host and settings.smtp_from_email:
+            reset_url = (
+                f"{settings.frontend_base_url.rstrip('/')}/reset-password?token={reset_token}"
+            )
+            try:
+                await send_email(
+                    user.email,
+                    "Reset your Quanta AI password",
+                    "Use this link to reset your password:\n\n"
+                    f"{reset_url}\n\nThis link expires in one hour.",
+                )
+            except Exception:
+                logger.exception("Failed to send password reset email.")
+        elif settings.app_env.lower() != "production":
+            return {
+                "status": "ok",
+                "message": "If the account exists, a reset token has been created.",
+                "development_reset_token": reset_token,
+            }
+
+    return {
+        "status": "ok",
+        "message": "If the account exists, password reset instructions will be sent.",
+    }
+
+
+@router.post("/password/reset", dependencies=[Depends(require_csrf), Depends(enforce_rate_limit)])
+async def reset_password(
+    payload: ResetPasswordRequest,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict[str, str]:
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    redis_key = f"quanta:reset-password:{token_hash}"
+    user_id = await redis_client.get(redis_key)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired.")
+
+    user = await session.get(User, UUID(user_id))
+    if not user:
+        await redis_client.delete(redis_key)
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired.")
+
+    user.password_hash = await asyncio.to_thread(hash_password, payload.new_password)
+    await session.commit()
+    await redis_client.delete(redis_key)
+    await revoke_user_sessions(str(user.id))
+    return {"status": "ok", "message": "Password reset successfully. Please sign in again."}
