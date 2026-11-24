@@ -18,7 +18,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), default="")
     role: Mapped[str] = mapped_column(String(24), default="user")
     plan: Mapped[str] = mapped_column(String(24), default="free")
-    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -26,7 +28,9 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
     title: Mapped[str] = mapped_column(String(160), default="New chat")
     model_alias: Mapped[str] = mapped_column(String(80), default="auto")
     is_temporary: Mapped[bool] = mapped_column(default=False)
