@@ -53,6 +53,19 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
     if extension in {".docx", ".xlsx", ".pptx", ".zip"}:
         if not zipfile.is_zipfile(BytesIO(data)):
             raise HTTPException(status_code=400, detail="The archive-based document is invalid.")
+        if extension != ".zip":
+            with zipfile.ZipFile(BytesIO(data)) as archive:
+                total_uncompressed = sum(info.file_size for info in archive.infolist())
+                oversized_member = any(info.file_size > 50 * 1024 * 1024 for info in archive.infolist())
+                suspicious_ratio = any(
+                    info.compress_size > 0 and info.file_size / info.compress_size > 200
+                    for info in archive.infolist()
+                )
+            if total_uncompressed > 200 * 1024 * 1024 or oversized_member or suspicious_ratio:
+                raise HTTPException(
+                    status_code=413,
+                    detail="The compressed document expands beyond the safe processing limits.",
+                )
     if extension == ".doc" and not data.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
         raise HTTPException(status_code=400, detail="The legacy Word document signature is invalid.")
     if extension == ".png" and not data.startswith(bytes.fromhex("89504E470D0A1A0A")):
@@ -237,6 +250,7 @@ async def upload_files(
         pass
 
     uploaded: list[dict] = []
+    written_paths: list[Path] = []
     try:
         for upload in files:
             filename = _safe_filename(upload.filename or "upload")
@@ -251,6 +265,7 @@ async def upload_files(
             storage_filename = f"{uuid.uuid4().hex}{extension}"
             destination = _storage_path(user_id, storage_filename)
             await asyncio.to_thread(destination.write_bytes, data)
+            written_paths.append(destination)
             try:
                 await asyncio.to_thread(destination.chmod, 0o600)
             except OSError:
@@ -280,13 +295,11 @@ async def upload_files(
         await session.commit()
     except Exception:
         await session.rollback()
-        for item in uploaded:
-            asset = await session.get(FileAsset, UUID(item["id"]))
-            if asset:
-                try:
-                    await asyncio.to_thread(_storage_path(user_id, asset.storage_filename).unlink)
-                except FileNotFoundError:
-                    pass
+        for path in written_paths:
+            try:
+                await asyncio.to_thread(path.unlink)
+            except FileNotFoundError:
+                pass
         raise
     finally:
         for upload in files:
