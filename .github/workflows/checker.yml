@@ -1,0 +1,176 @@
+name: Syntax Check & Cache Metadata
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  check-python:
+    name: Check Python Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore Python metadata & environment cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/pip
+            .venv
+          key: ${{ runner.os }}-python-meta-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml', '**/setup.py') }}
+          restore-keys: |
+            ${{ runner.os }}-python-meta-
+
+      - name: Check syntax of all Python files
+        run: |
+          shopt -s globstar nullglob
+          found=0
+          for file in **/*.py; do
+            [[ "$file" == .venv/* || "$file" == node_modules/* || "$file" == .git/* ]] && continue
+            found=1
+            echo "Checking Python syntax: $file"
+            python -m py_compile "$file"
+            sleep 0.25
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No Python files found."
+          fi
+
+  detect-js:
+    name: Detect JavaScript Files
+    runs-on: ubuntu-latest
+    outputs:
+      has_js: ${{ steps.check.outputs.has_js }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - id: check
+        name: Check if any JS files exist
+        run: |
+          if find . -path './.git' -prune -o -path './node_modules' -prune -o -path './.venv' -prune -o -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) -print -quit | grep -q .; then
+            echo "has_js=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_js=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check-js:
+    name: Check JavaScript Syntax
+    needs: detect-js
+    if: needs.detect-js.outputs.has_js == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore Node metadata & modules cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-meta-${{ hashFiles('**/package-lock.json', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-meta-
+
+      - name: Check syntax of all JavaScript files
+        run: |
+          shopt -s globstar nullglob
+          for file in **/*.js **/*.mjs **/*.cjs; do
+            [[ "$file" == node_modules/* || "$file" == .venv/* || "$file" == .git/* ]] && continue
+            echo "Checking JS syntax: $file"
+            node --check "$file"
+            sleep 0.25
+          done
+
+  save-metadata:
+    name: Save Python & Node Metadata
+    needs: [check-python, check-js, detect-js]
+    if: |
+      always() &&
+      (needs.check-python.result == 'success') &&
+      (needs.check-js.result == 'success' || needs.check-js.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore existing Python cache
+        id: cache-python
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/pip
+            .venv
+          key: ${{ runner.os }}-python-meta-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml', '**/setup.py') }}
+
+      - name: Install Python metadata if cache missed
+        if: steps.cache-python.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip setuptools wheel
+          if [ -f "requirements.txt" ]; then
+            .venv/bin/pip install -r requirements.txt
+          elif [ -f "pyproject.toml" ]; then
+            .venv/bin/pip install .
+          fi
+
+      - name: Save Python metadata cache
+        if: steps.cache-python.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/pip
+            .venv
+          key: ${{ runner.os }}-python-meta-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml', '**/setup.py') }}
+
+      - name: Restore existing Node cache
+        id: cache-node
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-meta-${{ hashFiles('**/package-lock.json', '**/package.json') }}
+
+      - name: Install Node metadata if cache missed
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci
+          elif [ -f "package.json" ]; then
+            npm install
+          fi
+
+      - name: Save Node metadata cache
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-meta-${{ hashFiles('**/package-lock.json', '**/package.json') }}
