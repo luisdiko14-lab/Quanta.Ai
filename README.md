@@ -2,7 +2,7 @@
 
 A multi-provider AI workspace built around FastAPI, React, PostgreSQL, Redis and Docker.
 
-**Status:** Foundation, accounts and chat-history milestone. This branch includes the initial web application, provider configuration, database schema, guest sessions, email/password account endpoints, CSRF protection, persistent conversations for signed-in users, local Docker stack and CI. Billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
+**Status:** Early implementation milestone. The repository includes the initial web application, provider adapters, database schema, guest and account sessions, persistent conversations, private file uploads with local and Cloudflare R2 storage adapters, and CI/deployment configuration. Billing, administration, image OCR, malware scanning and several planned AI tools remain incomplete.
 
 ## Stack
 - API: Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy 2, Alembic
