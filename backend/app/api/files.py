@@ -5,6 +5,7 @@ import re
 import uuid
 import zipfile
 from io import BytesIO
+from urllib.parse import quote
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -216,7 +217,11 @@ def _read_storage(user_id: UUID, storage_filename: str) -> bytes:
             Bucket=settings.r2_bucket_name,
             Key=_object_key(user_id, storage_filename),
         )
-        return response["Body"].read()
+        body = response["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
     return _storage_path(user_id, storage_filename).read_bytes()
 
 
@@ -397,7 +402,7 @@ async def download_file(
     return Response(
         content=data,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{asset.original_filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(asset.original_filename)}"},
     )
 
 
