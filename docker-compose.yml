@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: quanta
       POSTGRES_USER: quanta
-      POSTGRES_PASSWORD: quanta
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quanta}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -33,13 +33,13 @@ services:
     restart: unless-stopped
     env_file: [.env]
     environment:
-      APP_ENV: production
-      DATABASE_URL: postgresql+asyncpg://quanta:quanta@postgres:5432/quanta
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+asyncpg://quanta:${POSTGRES_PASSWORD:-quanta}@postgres:5432/quanta
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /app/storage
     volumes:
       - quanta_storage:/app/storage
-    ports: ["8000:8000"]
+    expose: ["8000"]
     depends_on:
       postgres:
         condition: service_healthy

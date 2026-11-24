@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Code2,
   Command,
+  Copy,
   FileText,
   Globe2,
   Image as ImageIcon,
@@ -24,6 +25,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Square,
   Sun,
   WandSparkles,
   X,
@@ -52,6 +54,14 @@ type ConversationSummary = {
   model: string;
   created_at: string | null;
   updated_at: string | null;
+};
+type UploadedAttachment = {
+  id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  extracted_text: string;
+  text_available: boolean;
 };
 
 const quickPrompts = [
@@ -95,6 +105,10 @@ function App() {
   const [providerState, setProviderState] = useState<'checking' | 'online' | 'offline'>('checking');
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem('quanta-theme', theme);
@@ -233,6 +247,39 @@ function App() {
     conversation.title.toLowerCase().includes(conversationSearch.toLowerCase())
   );
 
+  const uploadFiles = async (selected: FileList | null) => {
+    if (!selected?.length) return;
+    if (identity?.kind !== 'user') {
+      openAuth('login');
+      setAuthNotice('Sign in to upload and keep files private to your account.');
+      return;
+    }
+    if (attachments.length + selected.length > 5) {
+      setError('Attach up to five files to one message.');
+      return;
+    }
+    setUploadingFiles(true);
+    setError('');
+    const formData = new FormData();
+    Array.from(selected).forEach((file) => formData.append('files', file));
+    try {
+      const response = await fetch('/api/v1/files/upload', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: formData,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? 'File upload failed.');
+      setAttachments((current) => [...current, ...(payload.data ?? [])]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'File upload failed.');
+    } finally {
+      setUploadingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const updateAssistant = (id: string, content: string) => {
     setMessages((current) => current.map((message) => (
       message.id === id ? { ...message, content: message.content + content } : message
@@ -244,22 +291,35 @@ function App() {
     if (!prompt || streaming) return;
     setError('');
     setDraft('');
-    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: prompt };
+    const attachedNames = attachments.map((file) => file.filename);
+    const displayedPrompt = attachedNames.length
+      ? `${prompt}\\n\\nAttached files: ${attachedNames.join(', ')}`
+      : prompt;
+    const selectedAttachments = [...attachments];
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: displayedPrompt,
+    };
     const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '' };
     const nextMessages = [...messages, userMessage];
     setMessages([...nextMessages, assistantMessage]);
     setStreaming(true);
 
     try {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       const response = await fetch('/api/v1/chat/completions', {
         method: 'POST',
         credentials: 'include',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({
           model,
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           stream: true,
           conversation_id: conversationId,
+          file_ids: selectedAttachments.map((file) => file.id),
         }),
       });
       if (!response.ok) {
@@ -268,6 +328,7 @@ function App() {
       }
       const responseConversationId = response.headers.get('X-Conversation-ID');
       if (responseConversationId) setConversationId(responseConversationId);
+      if (selectedAttachments.length) setAttachments([]);
       if (!response.body) throw new Error('Streaming is not supported by this connection.');
 
       const reader = response.body.getReader();
@@ -291,10 +352,15 @@ function App() {
         }
       }
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Something went wrong.';
-      setError(message);
-      updateAssistant(assistantMessage.id, 'I could not complete that response. Check the API configuration and try again.');
+      if (caught instanceof DOMException && caught.name === 'AbortError') {
+        // The user explicitly stopped this generation; keep any partial response.
+      } else {
+        const message = caught instanceof Error ? caught.message : 'Something went wrong.';
+        setError(message);
+        updateAssistant(assistantMessage.id, 'I could not complete that response. Check the API configuration and try again.');
+      }
     } finally {
+      abortControllerRef.current = null;
       setStreaming(false);
       setHistoryVersion((version) => version + 1);
       composerRef.current?.focus();
@@ -541,6 +607,13 @@ function App() {
                   <div className="message-content">
                     <div className="message-meta"><strong>{message.role === 'assistant' ? 'Quanta' : 'You'}</strong>{message.role === 'assistant' && <span className="model-tag"><Sparkles size={11} /> AI</span>}</div>
                     <div className="message-text">{message.content || (streaming && message.role === 'assistant' ? <span className="thinking-dots"><i /><i /><i /></span> : '')}</div>
+                    {message.role === 'assistant' && message.content && (
+                      <button
+                        className="message-action"
+                        onClick={() => void navigator.clipboard.writeText(message.content).catch(() => setError('Clipboard access is unavailable in this browser.'))}
+                        aria-label="Copy response"
+                      ><Copy size={13} /> Copy response</button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -562,6 +635,15 @@ function App() {
               </div>
               <span className="composer-context">Provider routing <span className="context-live">●</span></span>
             </div>
+            <input
+              ref={fileInputRef}
+              className="hidden-file-input"
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.md,.markdown,.csv,.xlsx,.pptx,.json,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp,.gif,.svg,.py,.js,.jsx,.ts,.tsx,.html,.htm,.css,.java,.c,.h,.cpp,.hpp,.sql,.sh,.ps1,.toml,.ini,.zip"
+              onChange={(event) => void uploadFiles(event.currentTarget.files)}
+              aria-label="Choose files to attach"
+            />
             <textarea
               ref={composerRef}
               value={draft}
@@ -571,15 +653,42 @@ function App() {
               rows={2}
               aria-label="Message Quanta AI"
             />
+            {attachments.length > 0 && (
+              <div className="attachment-chips">
+                {attachments.map((file) => (
+                  <span className="attachment-chip" key={file.id} title={file.text_available ? 'Text extracted' : 'Stored file'}>
+                    <FileText size={12} />
+                    <span>{file.filename}</span>
+                    {!file.text_available && <small>stored</small>}
+                    <button
+                      onClick={() => setAttachments((items) => items.filter((item) => item.id !== file.id))}
+                      aria-label={`Remove ${file.filename}`}
+                    ><X size={12} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="composer-toolbar">
               <div className="composer-tools">
-                <button className="tool-button" disabled aria-label="Attach file" title="File uploads are coming in a later milestone"><Paperclip size={17} /><span>Attach</span></button>
+                <button
+                  className="tool-button"
+                  onClick={() => identity?.kind === 'user' ? fileInputRef.current?.click() : openAuth('login')}
+                  disabled={!csrfToken || uploadingFiles}
+                  aria-label="Attach file"
+                  title={identity?.kind === 'user' ? 'Attach files (up to five)' : 'Sign in to upload files'}
+                ><Paperclip size={17} /><span>{uploadingFiles ? 'Uploading…' : 'Attach'}</span></button>
                 <button className="tool-button" disabled aria-label="Voice input" title="Voice input is planned"><AudioLines size={17} /></button>
                 <span className="tool-divider" />
                 <span className="composer-hint"><Command size={12} /> + Enter to send</span>
               </div>
-              <button className="send-button" onClick={() => void sendMessage()} disabled={!draft.trim() || streaming || !csrfToken} aria-label="Send message">
-                {streaming ? <span className="send-spinner" /> : <Send size={16} />}
+              <button
+                className={'send-button' + (streaming ? ' stop-button' : '')}
+                onClick={() => streaming ? abortControllerRef.current?.abort() : void sendMessage()}
+                disabled={!streaming && (!draft.trim() || !csrfToken)}
+                aria-label={streaming ? 'Stop generating' : 'Send message'}
+                title={streaming ? 'Stop generating' : 'Send message'}
+              >
+                {streaming ? <Square size={14} fill="currentColor" /> : <Send size={16} />}
               </button>
             </div>
           </div>

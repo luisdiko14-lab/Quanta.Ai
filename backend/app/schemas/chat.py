@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     stream: bool = True
     temperature: float | None = Field(default=None, ge=0, le=2)
     conversation_id: UUID | None = None
+    file_ids: list[UUID] = Field(default_factory=list, max_length=5)
 
 
 class ConversationTitleUpdate(BaseModel):

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     deepseek_model_reasoner: str = ""
 
     storage_root: str = "./storage"
+    free_max_upload_size_mb: int = 10
+    premium_max_upload_size_mb: int = 50
     provider_keys_encryption_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
@@ -49,8 +51,16 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     def validate_runtime_secrets(self) -> None:
-        if self.app_env.lower() == "production" and self.secret_key == "dev-only-change-me":
-            raise RuntimeError("Set a unique SECRET_KEY before running in production.")
+        unsafe_secrets = {
+            "dev-only-change-me",
+            "replace-this-with-a-long-random-secret-before-deploying",
+        }
+        if self.app_env.lower() == "production" and (
+            self.secret_key in unsafe_secrets or len(self.secret_key) < 32
+        ):
+            raise RuntimeError(
+                "Set a unique SECRET_KEY of at least 32 characters before running in production."
+            )
 
 
 @lru_cache
