@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Code2,
   Command,
+  Copy,
   FileText,
   Globe2,
   Image as ImageIcon,
@@ -24,6 +25,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Square,
   Sun,
   WandSparkles,
   X,
@@ -103,6 +105,7 @@ function App() {
   const [providerState, setProviderState] = useState<'checking' | 'online' | 'offline'>('checking');
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -304,9 +307,12 @@ function App() {
     setStreaming(true);
 
     try {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       const response = await fetch('/api/v1/chat/completions', {
         method: 'POST',
         credentials: 'include',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({
           model,
@@ -346,10 +352,15 @@ function App() {
         }
       }
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Something went wrong.';
-      setError(message);
-      updateAssistant(assistantMessage.id, 'I could not complete that response. Check the API configuration and try again.');
+      if (caught instanceof DOMException && caught.name === 'AbortError') {
+        // The user explicitly stopped this generation; keep any partial response.
+      } else {
+        const message = caught instanceof Error ? caught.message : 'Something went wrong.';
+        setError(message);
+        updateAssistant(assistantMessage.id, 'I could not complete that response. Check the API configuration and try again.');
+      }
     } finally {
+      abortControllerRef.current = null;
       setStreaming(false);
       setHistoryVersion((version) => version + 1);
       composerRef.current?.focus();
@@ -596,6 +607,13 @@ function App() {
                   <div className="message-content">
                     <div className="message-meta"><strong>{message.role === 'assistant' ? 'Quanta' : 'You'}</strong>{message.role === 'assistant' && <span className="model-tag"><Sparkles size={11} /> AI</span>}</div>
                     <div className="message-text">{message.content || (streaming && message.role === 'assistant' ? <span className="thinking-dots"><i /><i /><i /></span> : '')}</div>
+                    {message.role === 'assistant' && message.content && (
+                      <button
+                        className="message-action"
+                        onClick={() => void navigator.clipboard.writeText(message.content).catch(() => setError('Clipboard access is unavailable in this browser.'))}
+                        aria-label="Copy response"
+                      ><Copy size={13} /> Copy response</button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -663,8 +681,14 @@ function App() {
                 <span className="tool-divider" />
                 <span className="composer-hint"><Command size={12} /> + Enter to send</span>
               </div>
-              <button className="send-button" onClick={() => void sendMessage()} disabled={!draft.trim() || streaming || !csrfToken} aria-label="Send message">
-                {streaming ? <span className="send-spinner" /> : <Send size={16} />}
+              <button
+                className={'send-button' + (streaming ? ' stop-button' : '')}
+                onClick={() => streaming ? abortControllerRef.current?.abort() : void sendMessage()}
+                disabled={!streaming && (!draft.trim() || !csrfToken)}
+                aria-label={streaming ? 'Stop generating' : 'Send message'}
+                title={streaming ? 'Stop generating' : 'Send message'}
+              >
+                {streaming ? <Square size={14} fill="currentColor" /> : <Send size={16} />}
               </button>
             </div>
           </div>
