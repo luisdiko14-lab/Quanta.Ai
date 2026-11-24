@@ -51,3 +51,19 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     model_alias: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FileAsset(Base):
+    __tablename__ = "file_assets"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    original_filename: Mapped[str] = mapped_column(String(255))
+    storage_filename: Mapped[str] = mapped_column(String(80), unique=True)
+    media_type: Mapped[str] = mapped_column(String(160))
+    size_bytes: Mapped[int]
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    extracted_text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
