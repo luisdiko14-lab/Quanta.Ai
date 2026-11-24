@@ -9,7 +9,7 @@ def test_safe_filename_removes_path_components() -> None:
 
 
 def test_utf8_text_upload_is_validated_and_extractable() -> None:
-    data = "Quanta AI file context".encode("utf-8")
+    data = b"Quanta AI file context"
 
     extension, media_type = _validate_file("notes.txt", data)
 
