@@ -15,7 +15,7 @@ A multi-provider AI workspace built around FastAPI, React, PostgreSQL, Redis and
 1. Copy `.env.example` to `.env` and set a unique `SECRET_KEY`.
 2. Configure provider keys and current model IDs in `.env`. Never add provider keys to frontend variables.
 3. Run `docker compose up --build`.
-4. Open `http://localhost:8080`; API health is at `http://localhost:8000/health/ready`.
+4. Open `http://localhost:8080`; API health is proxied at `http://localhost:8080/health/ready`. The API container is internal to the Compose network.
 
 For backend development: `cd backend && pip install -e ".[dev]" && uvicorn app.main:app --reload`.
 For frontend development: run the API on port 8000, then `cd frontend && npm install && npm run dev`.
