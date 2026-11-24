@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:5173"
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
     database_url: str = "postgresql+asyncpg://quanta:quanta@localhost:5432/quanta"
+    database_pool_size: int = 1
+    database_max_overflow: int = 0
+    database_pool_recycle_seconds: int = 300
     redis_url: str = "redis://localhost:6379/0"
     rate_limit_requests: int = 20
     rate_limit_window_seconds: int = 60
@@ -37,11 +40,6 @@ class Settings(BaseSettings):
 
     storage_root: str = "./storage"
     storage_backend: str = "local"
-    r2_account_id: str = ""
-    r2_bucket_name: str = ""
-    r2_access_key_id: str = ""
-    r2_secret_access_key: str = ""
-    r2_endpoint_url: str = ""
     free_max_upload_size_mb: int = 10
     premium_max_upload_size_mb: int = 50
     provider_keys_encryption_key: str = ""
@@ -53,6 +51,15 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
 
     @property
+    def sqlalchemy_database_url(self) -> str:
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
@@ -61,12 +68,15 @@ class Settings(BaseSettings):
             "dev-only-change-me",
             "replace-this-with-a-long-random-secret-before-deploying",
         }
-        if self.app_env.lower() == "production" and (
-            self.secret_key in unsafe_secrets or len(self.secret_key) < 32
-        ):
-            raise RuntimeError(
-                "Set a unique SECRET_KEY of at least 32 characters before running in production."
-            )
+        if self.app_env.lower() == "production":
+            if self.secret_key in unsafe_secrets or len(self.secret_key) < 32:
+                raise RuntimeError(
+                    "Set a unique SECRET_KEY of at least 32 characters before running in production."
+                )
+            if not self.sqlalchemy_database_url.startswith("postgresql+asyncpg://"):
+                raise RuntimeError(
+                    "DATABASE_URL must point to PostgreSQL and use the postgresql+asyncpg:// driver."
+                )
 
 
 @lru_cache
