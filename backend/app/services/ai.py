@@ -1,8 +1,8 @@
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator
 
 from fastapi import HTTPException
 from openai import APIError, APIStatusError, AsyncOpenAI
@@ -24,16 +24,45 @@ class ModelDefinition:
 
 def configured_models(config: Settings = settings) -> list[ModelDefinition]:
     candidates = [
-        ModelDefinition("gemini-free", "Gemini · Free", "gemini", config.gemini_model_free, "free"),
-        ModelDefinition("gemini-premium", "Gemini · Premium", "gemini", config.gemini_model_premium, "premium"),
-        ModelDefinition("groq-budget", "Llama · Budget", "groq", config.groq_model_budget, "free"),
-        ModelDefinition("groq-llama-70b", "Llama · 70B", "groq", config.groq_model_llama_70b, "premium"),
+        ModelDefinition(
+            "gemini-free", "Gemini · Free", "gemini", config.gemini_model_free, "free"
+        ),
+        ModelDefinition(
+            "gemini-premium",
+            "Gemini · Premium",
+            "gemini",
+            config.gemini_model_premium,
+            "premium",
+        ),
+        ModelDefinition(
+            "groq-budget", "Llama · Budget", "groq", config.groq_model_budget, "free"
+        ),
+        ModelDefinition(
+            "groq-llama-70b",
+            "Llama · 70B",
+            "groq",
+            config.groq_model_llama_70b,
+            "premium",
+        ),
         ModelDefinition("groq-qwen", "Qwen · Groq", "groq", config.groq_model_qwen, "free"),
-        ModelDefinition("deepseek-chat", "DeepSeek · Chat", "deepseek", config.deepseek_model_chat, "free"),
-        ModelDefinition("deepseek-reasoner", "DeepSeek · Reasoner", "deepseek", config.deepseek_model_reasoner, "premium"),
+        ModelDefinition(
+            "deepseek-chat",
+            "DeepSeek · Chat",
+            "deepseek",
+            config.deepseek_model_chat,
+            "free",
+        ),
+        ModelDefinition(
+            "deepseek-reasoner",
+            "DeepSeek · Reasoner",
+            "deepseek",
+            config.deepseek_model_reasoner,
+            "premium",
+        ),
     ]
     return [
-        item for item in candidates
+        item
+        for item in candidates
         if item.model_id and _provider_credentials(item.provider, config)[0]
     ]
 
@@ -106,6 +135,14 @@ def _safe_error(exc: Exception) -> str:
     return "The provider could not complete the request."
 
 
+def _retryable(exc: APIError) -> bool:
+    return (
+        not isinstance(exc, APIStatusError)
+        or exc.status_code == 429
+        or exc.status_code >= 500
+    )
+
+
 async def complete_chat(request: ChatRequest, config: Settings = settings) -> dict:
     candidates = _candidates(request.model, config)
     failures: list[str] = []
@@ -125,21 +162,21 @@ async def complete_chat(request: ChatRequest, config: Settings = settings) -> di
                         "object": "chat.completion",
                         "model": model.alias,
                         "provider": model.provider,
-                        "choices": [{
-                            "index": 0,
-                            "message": {"role": "assistant", "content": message.content or ""},
-                            "finish_reason": response.choices[0].finish_reason,
-                        }],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": message.content or "",
+                                },
+                                "finish_reason": response.choices[0].finish_reason,
+                            }
+                        ],
                         "usage": response.usage.model_dump() if response.usage else None,
                     }
                 except APIError as exc:
                     failures.append(f"{model.alias}: {_safe_error(exc)}")
-                    retryable = (
-                        not isinstance(exc, APIStatusError)
-                        or exc.status_code == 429
-                        or exc.status_code >= 500
-                    )
-                    if not retryable or attempt >= config.provider_max_retries:
+                    if not _retryable(exc) or attempt >= config.provider_max_retries:
                         break
                     await asyncio.sleep(0.35 * (2**attempt))
         finally:
@@ -148,7 +185,10 @@ async def complete_chat(request: ChatRequest, config: Settings = settings) -> di
     logger.warning("All configured AI model attempts failed: %s", "; ".join(failures))
     raise HTTPException(
         status_code=503,
-        detail="No configured AI provider could complete this request. Check provider keys, model IDs and status.",
+        detail=(
+            "No configured AI provider could complete this request. "
+            "Check provider keys, model IDs and status."
+        ),
     )
 
 
@@ -182,11 +222,13 @@ async def stream_chat(request: ChatRequest, config: Settings = settings) -> Asyn
                             "id": "quanta-stream",
                             "object": "chat.completion.chunk",
                             "model": model.alias,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": content},
-                                "finish_reason": None,
-                            }],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": content},
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
                         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -195,22 +237,26 @@ async def stream_chat(request: ChatRequest, config: Settings = settings) -> Asyn
                 except APIError as exc:
                     failures.append(f"{model.alias}: {_safe_error(exc)}")
                     if emitted:
-                        payload = {"error": {"message": "The provider stream ended unexpectedly."}}
+                        payload = {
+                            "error": {"message": "The provider stream ended unexpectedly."}
+                        }
                         yield f"data: {json.dumps(payload)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
-                    retryable = (
-                        not isinstance(exc, APIStatusError)
-                        or exc.status_code == 429
-                        or exc.status_code >= 500
-                    )
-                    if not retryable or attempt >= config.provider_max_retries:
+                    if not _retryable(exc) or attempt >= config.provider_max_retries:
                         break
                     await asyncio.sleep(0.35 * (2**attempt))
         finally:
             await client.close()
 
     logger.warning("All streaming provider attempts failed: %s", "; ".join(failures))
-    payload = {"error": {"message": "No configured AI provider could start this response. Check provider keys and model IDs."}}
+    payload = {
+        "error": {
+            "message": (
+                "No configured AI provider could start this response. "
+                "Check provider keys and model IDs."
+            )
+        }
+    }
     yield f"data: {json.dumps(payload)}\n\n"
     yield "data: [DONE]\n\n"
