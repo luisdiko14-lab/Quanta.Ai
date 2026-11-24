@@ -53,6 +53,14 @@ type ConversationSummary = {
   created_at: string | null;
   updated_at: string | null;
 };
+type UploadedAttachment = {
+  id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  extracted_text: string;
+  text_available: boolean;
+};
 
 const quickPrompts = [
   { icon: Code2, title: 'Build something', detail: 'Turn an idea into clean, working code.' },
@@ -95,6 +103,9 @@ function App() {
   const [providerState, setProviderState] = useState<'checking' | 'online' | 'offline'>('checking');
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem('quanta-theme', theme);
@@ -233,6 +244,39 @@ function App() {
     conversation.title.toLowerCase().includes(conversationSearch.toLowerCase())
   );
 
+  const uploadFiles = async (selected: FileList | null) => {
+    if (!selected?.length) return;
+    if (identity?.kind !== 'user') {
+      openAuth('login');
+      setAuthNotice('Sign in to upload and keep files private to your account.');
+      return;
+    }
+    if (attachments.length + selected.length > 5) {
+      setError('Attach up to five files to one message.');
+      return;
+    }
+    setUploadingFiles(true);
+    setError('');
+    const formData = new FormData();
+    Array.from(selected).forEach((file) => formData.append('files', file));
+    try {
+      const response = await fetch('/api/v1/files/upload', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: formData,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? 'File upload failed.');
+      setAttachments((current) => [...current, ...(payload.data ?? [])]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'File upload failed.');
+    } finally {
+      setUploadingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const updateAssistant = (id: string, content: string) => {
     setMessages((current) => current.map((message) => (
       message.id === id ? { ...message, content: message.content + content } : message
@@ -244,7 +288,16 @@ function App() {
     if (!prompt || streaming) return;
     setError('');
     setDraft('');
-    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: prompt };
+    const attachedNames = attachments.map((file) => file.filename);
+    const displayedPrompt = attachedNames.length
+      ? `${prompt}\\n\\nAttached files: ${attachedNames.join(', ')}`
+      : prompt;
+    const selectedAttachments = [...attachments];
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: displayedPrompt,
+    };
     const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '' };
     const nextMessages = [...messages, userMessage];
     setMessages([...nextMessages, assistantMessage]);
@@ -260,6 +313,7 @@ function App() {
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           stream: true,
           conversation_id: conversationId,
+          file_ids: selectedAttachments.map((file) => file.id),
         }),
       });
       if (!response.ok) {
@@ -268,6 +322,7 @@ function App() {
       }
       const responseConversationId = response.headers.get('X-Conversation-ID');
       if (responseConversationId) setConversationId(responseConversationId);
+      if (selectedAttachments.length) setAttachments([]);
       if (!response.body) throw new Error('Streaming is not supported by this connection.');
 
       const reader = response.body.getReader();
@@ -562,6 +617,15 @@ function App() {
               </div>
               <span className="composer-context">Provider routing <span className="context-live">●</span></span>
             </div>
+            <input
+              ref={fileInputRef}
+              className="hidden-file-input"
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.md,.markdown,.csv,.xlsx,.pptx,.json,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp,.gif,.svg,.py,.js,.jsx,.ts,.tsx,.html,.htm,.css,.java,.c,.h,.cpp,.hpp,.sql,.sh,.ps1,.toml,.ini,.zip"
+              onChange={(event) => void uploadFiles(event.currentTarget.files)}
+              aria-label="Choose files to attach"
+            />
             <textarea
               ref={composerRef}
               value={draft}
@@ -571,9 +635,30 @@ function App() {
               rows={2}
               aria-label="Message Quanta AI"
             />
+            {attachments.length > 0 && (
+              <div className="attachment-chips">
+                {attachments.map((file) => (
+                  <span className="attachment-chip" key={file.id} title={file.text_available ? 'Text extracted' : 'Stored file'}>
+                    <FileText size={12} />
+                    <span>{file.filename}</span>
+                    {!file.text_available && <small>stored</small>}
+                    <button
+                      onClick={() => setAttachments((items) => items.filter((item) => item.id !== file.id))}
+                      aria-label={`Remove ${file.filename}`}
+                    ><X size={12} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="composer-toolbar">
               <div className="composer-tools">
-                <button className="tool-button" disabled aria-label="Attach file" title="File uploads are coming in a later milestone"><Paperclip size={17} /><span>Attach</span></button>
+                <button
+                  className="tool-button"
+                  onClick={() => identity?.kind === 'user' ? fileInputRef.current?.click() : openAuth('login')}
+                  disabled={!csrfToken || uploadingFiles}
+                  aria-label="Attach file"
+                  title={identity?.kind === 'user' ? 'Attach files (up to five)' : 'Sign in to upload files'}
+                ><Paperclip size={17} /><span>{uploadingFiles ? 'Uploading…' : 'Attach'}</span></button>
                 <button className="tool-button" disabled aria-label="Voice input" title="Voice input is planned"><AudioLines size={17} /></button>
                 <span className="tool-divider" />
                 <span className="composer-hint"><Command size={12} /> + Enter to send</span>
