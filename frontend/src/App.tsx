@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   ArrowUp,
   AudioLines,
@@ -10,6 +10,9 @@ import {
   Globe2,
   Image as ImageIcon,
   LayoutDashboard,
+  LockKeyhole,
+  LogIn,
+  Mail,
   Menu,
   MessageSquare,
   Moon,
@@ -23,6 +26,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  UserPlus,
   WandSparkles,
   X,
   Zap,
@@ -35,6 +39,15 @@ type ChatMessage = {
 };
 
 type ModelOption = { id: string; label: string; provider: string; access: string };
+type Identity = {
+  user_id?: string | null;
+  username: string;
+  display_name: string;
+  role: string;
+  plan: string;
+  kind: string;
+};
+type AuthMode = 'login' | 'register' | 'verify' | 'forgot' | 'reset' | 'account';
 
 const quickPrompts = [
   { icon: Code2, title: 'Build something', detail: 'Turn an idea into clean, working code.' },
@@ -61,6 +74,17 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState('');
   const [csrfToken, setCsrfToken] = useState('');
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authDisplayName, setAuthDisplayName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
   const [providerState, setProviderState] = useState<'checking' | 'online' | 'offline'>('checking');
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -80,7 +104,10 @@ function App() {
         let token = csrfPayload.csrf_token as string;
 
         const meResponse = await fetch('/api/v1/auth/me', { credentials: 'include' });
-        if (!meResponse.ok) {
+        if (meResponse.ok) {
+          const currentIdentity = await meResponse.json() as Identity;
+          if (active) setIdentity(currentIdentity);
+        } else {
           const guestResponse = await fetch('/api/v1/auth/guest', {
             method: 'POST',
             credentials: 'include',
@@ -90,6 +117,15 @@ function App() {
           if (!guestResponse.ok) throw new Error('Could not start a guest session.');
           const guestPayload = await guestResponse.json();
           token = guestPayload.csrf_token as string;
+          if (active) {
+            setIdentity({
+              username: 'Guest',
+              display_name: 'Guest workspace',
+              role: 'guest',
+              plan: 'guest',
+              kind: 'guest',
+            });
+          }
         }
 
         const [modelResponse, healthResponse] = await Promise.all([
@@ -185,6 +221,131 @@ function App() {
     }
   };
 
+  const openAuth = (mode: AuthMode = 'login') => {
+    setAuthMode(mode);
+    setAuthNotice('');
+    setAuthError('');
+    setAuthOpen(true);
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthError('');
+    setAuthNotice('');
+    let endpoint = '';
+    let payload: Record<string, string> = {};
+
+    if (authMode === 'login') {
+      endpoint = '/api/v1/auth/login';
+      payload = { login: authEmail, password: authPassword };
+    } else if (authMode === 'register') {
+      endpoint = '/api/v1/auth/register';
+      payload = {
+        email: authEmail,
+        username: authUsername,
+        display_name: authDisplayName,
+        password: authPassword,
+      };
+    } else if (authMode === 'verify') {
+      endpoint = '/api/v1/auth/verify-email';
+      payload = { token: authToken };
+    } else if (authMode === 'forgot') {
+      endpoint = '/api/v1/auth/password/forgot';
+      payload = { email: authEmail };
+    } else if (authMode === 'reset') {
+      endpoint = '/api/v1/auth/password/reset';
+      payload = { token: authToken, new_password: authPassword };
+    } else {
+      setAuthBusy(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail ?? data.message ?? 'That request could not be completed.');
+
+      if (authMode === 'login') {
+        setIdentity(data.user as Identity);
+        setCsrfToken(data.csrf_token as string);
+        setAuthOpen(false);
+        setAuthPassword('');
+        setAuthNotice('');
+      } else if (authMode === 'register') {
+        setAuthNotice(data.message ?? 'Account created. Check your email to verify it.');
+        if (data.development_verification_token) {
+          setAuthToken(data.development_verification_token);
+          setAuthMode('verify');
+        } else {
+          setAuthMode('login');
+        }
+        setAuthPassword('');
+      } else if (authMode === 'verify') {
+        setAuthNotice(data.message ?? 'Email verified. You can now sign in.');
+        setAuthMode('login');
+        setAuthToken('');
+      } else if (authMode === 'forgot') {
+        if (data.development_reset_token) {
+          setAuthToken(data.development_reset_token);
+          setAuthMode('reset');
+          setAuthNotice('Development reset token created for this local environment.');
+        } else {
+          setAuthNotice(data.message ?? 'Check your email for reset instructions.');
+          setAuthMode('login');
+        }
+      } else if (authMode === 'reset') {
+        setAuthNotice(data.message ?? 'Password updated. Please sign in.');
+        setAuthMode('login');
+        setAuthToken('');
+        setAuthPassword('');
+      }
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : 'Something went wrong.');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
+      });
+      const csrfResponse = await fetch('/api/v1/auth/csrf', { credentials: 'include' });
+      const csrfPayload = await csrfResponse.json();
+      const token = csrfPayload.csrf_token as string;
+      const guestResponse = await fetch('/api/v1/auth/guest', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+        body: '{}',
+      });
+      if (!guestResponse.ok) throw new Error('Could not start a guest session.');
+      const guestPayload = await guestResponse.json();
+      setCsrfToken(guestPayload.csrf_token as string);
+      setIdentity({
+        username: 'Guest',
+        display_name: 'Guest workspace',
+        role: 'guest',
+        plan: 'guest',
+        kind: 'guest',
+      });
+      setAuthOpen(false);
+      setMessages([]);
+    } catch {
+      setAuthError('Could not sign out safely. Please refresh the page.');
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="ambient ambient-one" />
@@ -229,10 +390,13 @@ function App() {
             <div><strong>More room to think</strong><span>Explore Quanta plans</span></div>
             <ArrowUp size={15} />
           </div>
-          <button className="profile-row" disabled title="Account profiles are coming in the authentication milestone">
-            <div className="avatar">G</div>
-            <div className="profile-copy"><strong>Guest workspace</strong><span>Local preview</span></div>
-            <Settings2 size={17} />
+          <button className="profile-row" onClick={() => openAuth(identity?.kind === 'user' ? 'account' : 'login')}>
+            <div className="avatar">{(identity?.display_name || 'G').slice(0, 1).toUpperCase()}</div>
+            <div className="profile-copy">
+              <strong>{identity?.display_name || 'Guest workspace'}</strong>
+              <span>{identity?.plan ? identity.plan.replaceAll('_', ' ') : 'Guest session'}</span>
+            </div>
+            {identity?.kind === 'user' ? <Settings2 size={17} /> : <LogIn size={17} />}
           </button>
         </div>
       </aside>
@@ -325,6 +489,94 @@ function App() {
           <div className="disclaimer">Quanta AI can make mistakes. Verify important information.</div>
         </div>
       </main>
+
+      {authOpen && (
+        <div className="auth-overlay" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setAuthOpen(false);
+        }}>
+          <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+            <button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close account dialog"><X size={18} /></button>
+            <div className="auth-brand"><QMark /></div>
+            {authMode === 'account' ? (
+              <>
+                <div className="auth-eyebrow">YOUR ACCOUNT</div>
+                <h2 id="auth-title">{identity?.display_name || identity?.username}</h2>
+                <p className="auth-subtitle">Signed in to Quanta AI · {identity?.plan?.replaceAll('_', ' ')}</p>
+                <div className="account-summary">
+                  <span>Username</span><strong>{identity?.username}</strong>
+                  <span>Membership</span><strong>{identity?.plan?.replaceAll('_', ' ')}</strong>
+                  <span>Role</span><strong>{identity?.role}</strong>
+                </div>
+                <button className="auth-submit" onClick={() => void logout()}>Sign out</button>
+              </>
+            ) : (
+              <>
+                <div className="auth-eyebrow">QUANTA AI ACCOUNT</div>
+                <h2 id="auth-title">
+                  {authMode === 'login' ? 'Welcome back' :
+                   authMode === 'register' ? 'Create your account' :
+                   authMode === 'verify' ? 'Verify your email' :
+                   authMode === 'forgot' ? 'Reset your password' : 'Choose a new password'}
+                </h2>
+                <p className="auth-subtitle">
+                  {authMode === 'login' ? 'Sign in to keep your AI workspace connected.' :
+                   authMode === 'register' ? 'Create an account to start building your workspace.' :
+                   authMode === 'verify' ? 'Enter the verification token from your email.' :
+                   authMode === 'forgot' ? 'We will send a secure reset link if the account exists.' :
+                   'Use a new password with at least 12 characters.'}
+                </p>
+                {authNotice && <div className="auth-notice">{authNotice}</div>}
+                {authError && <div className="auth-error">{authError}</div>}
+                <form className="auth-form" onSubmit={(event) => void submitAuth(event)}>
+                  {authMode === 'login' && (
+                    <>
+                      <label>Email or username<input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="username" required /></label>
+                      <label>Password<input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="current-password" required /></label>
+                    </>
+                  )}
+                  {authMode === 'register' && (
+                    <>
+                      <label>Display name<input value={authDisplayName} onChange={(event) => setAuthDisplayName(event.target.value)} autoComplete="name" maxLength={80} /></label>
+                      <label>Username<input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_]+" required /></label>
+                      <label>Email<input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="email" required /></label>
+                      <label>Password<input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+                    </>
+                  )}
+                  {authMode === 'verify' && (
+                    <label>Verification token<input value={authToken} onChange={(event) => setAuthToken(event.target.value)} autoComplete="one-time-code" required /></label>
+                  )}
+                  {authMode === 'forgot' && (
+                    <label>Email address<input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} autoComplete="email" required /></label>
+                  )}
+                  {authMode === 'reset' && (
+                    <>
+                      <label>Reset token<input value={authToken} onChange={(event) => setAuthToken(event.target.value)} required /></label>
+                      <label>New password<input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+                    </>
+                  )}
+                  <button className="auth-submit" type="submit" disabled={authBusy}>
+                    {authBusy ? 'Please wait…' :
+                     authMode === 'login' ? 'Sign in' :
+                     authMode === 'register' ? 'Create account' :
+                     authMode === 'verify' ? 'Verify email' :
+                     authMode === 'forgot' ? 'Send reset link' : 'Update password'}
+                  </button>
+                </form>
+                <div className="auth-links">
+                  {authMode === 'login' && <>
+                    <button onClick={() => { setAuthMode('register'); setAuthError(''); setAuthNotice(''); }}>Create account</button>
+                    <button onClick={() => { setAuthMode('forgot'); setAuthError(''); setAuthNotice(''); }}>Forgot password?</button>
+                  </>}
+                  {authMode === 'register' && <button onClick={() => { setAuthMode('login'); setAuthError(''); setAuthNotice(''); }}>Already have an account? Sign in</button>}
+                  {authMode === 'forgot' && <button onClick={() => { setAuthMode('login'); setAuthError(''); setAuthNotice(''); }}>Back to sign in</button>}
+                  {(authMode === 'verify' || authMode === 'reset') && <button onClick={() => { setAuthMode('login'); setAuthError(''); setAuthNotice(''); }}>Back to sign in</button>}
+                </div>
+              </>
+            )}
+            <div className="auth-privacy"><LockKeyhole size={13} /> Protected session · Private by design</div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
