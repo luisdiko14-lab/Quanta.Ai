@@ -261,7 +261,13 @@ async def upload_files(
                     detail=f"{filename} exceeds your {max_bytes // (1024 * 1024)} MB upload limit.",
                 )
             extension, media_type = _validate_file(filename, data)
-            extracted = await asyncio.to_thread(_extract_text, extension, data)
+            try:
+                extracted = await asyncio.to_thread(_extract_text, extension, data)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{filename} could not be safely parsed.",
+                ) from exc
             storage_filename = f"{uuid.uuid4().hex}{extension}"
             destination = _storage_path(user_id, storage_filename)
             await asyncio.to_thread(destination.write_bytes, data)
@@ -325,7 +331,6 @@ async def download_file(
         path=path,
         media_type="application/octet-stream",
         filename=asset.original_filename,
-        content_disposition_type="attachment",
     )
 
 
