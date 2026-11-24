@@ -10,15 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import router as auth_router
+from app.api.files import router as files_router
 from app.core.rate_limit import enforce_rate_limit
 from app.core.sessions import require_csrf, require_identity
-from app.db.models import Conversation, Message
+from app.db.models import Conversation, FileAsset, Message
 from app.db.session import get_db_session, session_factory
-from app.schemas.chat import ChatRequest, ConversationTitleUpdate
+from app.schemas.chat import ChatMessage, ChatRequest, ConversationTitleUpdate
 from app.services.ai import complete_chat, provider_status, public_models, stream_chat
 
 router = APIRouter(prefix="/api/v1", tags=["Quanta AI"])
 router.include_router(auth_router)
+router.include_router(files_router)
 
 
 def _user_uuid(identity: dict) -> UUID | None:
@@ -244,6 +246,59 @@ async def delete_conversation(
     return Response(status_code=204)
 
 
+
+
+async def _attach_file_context(
+    payload: ChatRequest,
+    identity: dict,
+    session: AsyncSession,
+) -> ChatRequest:
+    if not payload.file_ids:
+        return payload
+    user_id = _user_uuid(identity)
+    if not user_id:
+        raise HTTPException(status_code=403, detail="Sign in to use uploaded files in AI chat.")
+
+    assets = await session.scalars(
+        select(FileAsset).where(
+            FileAsset.user_id == user_id,
+            FileAsset.id.in_(payload.file_ids),
+        )
+    )
+    asset_list = list(assets)
+    if len({asset.id for asset in asset_list}) != len(set(payload.file_ids)):
+        raise HTTPException(status_code=404, detail="One or more attached files were not found.")
+
+    excerpts = []
+    for asset in asset_list:
+        if asset.extracted_text:
+            excerpts.append(
+                f"--- Attached file: {asset.original_filename} ---\\n{asset.extracted_text}"
+            )
+    if not excerpts:
+        return payload
+
+    user_messages = list(payload.messages)
+    last_user_index = next(
+        (index for index in range(len(user_messages) - 1, -1, -1)
+         if user_messages[index].role == "user"),
+        None,
+    )
+    if last_user_index is None:
+        raise HTTPException(status_code=422, detail="A user message is required.")
+    context = "\\n\\n".join(excerpts)[:120_000]
+    original = user_messages[last_user_index]
+    user_messages[last_user_index] = ChatMessage(
+        role="user",
+        content=(
+            f"{original.content}\\n\\n"
+            "Use the following private uploaded-file content as context when relevant:\\n\\n"
+            f"{context}"
+        )[:180_000],
+    )
+    return payload.model_copy(update={"messages": user_messages, "file_ids": []})
+
+
 @router.post(
     "/chat/completions",
     dependencies=[Depends(enforce_rate_limit), Depends(require_csrf)],
@@ -269,6 +324,7 @@ async def chat_completions(
             )
 
     conversation_id = await _prepare_conversation(payload, identity, session)
+    provider_payload = await _attach_file_context(payload, identity, session)
     headers = {
         "Cache-Control": "no-cache, no-transform",
         "X-Accel-Buffering": "no",
@@ -284,17 +340,17 @@ async def chat_completions(
             if user_id is None:
                 raise HTTPException(status_code=403, detail="Sign in to save chat history.")
             response_stream = _stream_and_record(
-                payload, user_id, conversation_id, premium_access
+                provider_payload, user_id, conversation_id, premium_access
             )
         else:
-            response_stream = stream_chat(payload, allow_premium=premium_access)
+            response_stream = stream_chat(provider_payload, allow_premium=premium_access)
         return StreamingResponse(
             response_stream,
             media_type="text/event-stream",
             headers=headers,
         )
 
-    result = await complete_chat(payload, allow_premium=premium_access)
+    result = await complete_chat(provider_payload, allow_premium=premium_access)
     if conversation_id:
         user_id = _user_uuid(identity)
         if user_id is not None:
