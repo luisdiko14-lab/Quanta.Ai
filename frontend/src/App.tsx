@@ -126,6 +126,39 @@ function App() {
           }
         }
 
+        const route = window.location.pathname;
+        const urlToken = new URLSearchParams(window.location.search).get('token') ?? '';
+        if (route.startsWith('/verify-email') && urlToken) {
+          try {
+            const verificationResponse = await fetch('/api/v1/auth/verify-email', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+              body: JSON.stringify({ token: urlToken }),
+            });
+            const verificationPayload = await verificationResponse.json().catch(() => ({}));
+            if (!verificationResponse.ok) {
+              setAuthError(verificationPayload.detail ?? 'This verification link is invalid or expired.');
+              setAuthMode('verify');
+              setAuthToken(urlToken);
+            } else {
+              setAuthNotice(verificationPayload.message ?? 'Email verified. You can now sign in.');
+              setAuthMode('login');
+            }
+          } catch {
+            setAuthError('Could not verify this email link. Please try again.');
+            setAuthMode('verify');
+            setAuthToken(urlToken);
+          }
+          setAuthOpen(true);
+          window.history.replaceState({}, '', '/');
+        } else if (route.startsWith('/reset-password') && urlToken) {
+          setAuthToken(urlToken);
+          setAuthMode('reset');
+          setAuthOpen(true);
+          window.history.replaceState({}, '', '/');
+        }
+
         const [modelResponse, healthResponse] = await Promise.all([
           fetch('/api/v1/models', { credentials: 'include' }),
           fetch('/health/live'),
