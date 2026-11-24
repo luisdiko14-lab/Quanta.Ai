@@ -149,7 +149,7 @@ async def register_account(
 @router.post("/verify-email", dependencies=[Depends(require_csrf), Depends(enforce_rate_limit)])
 async def verify_email(
     payload: VerifyEmailRequest,
-    session: AsyncSession = Depends(get_db_session),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict[str, str]:
     token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
     redis_key = f"quanta:verify-email:{token_hash}"
@@ -175,7 +175,7 @@ async def verify_email(
 async def login(
     payload: LoginRequest,
     response: Response,
-    session: AsyncSession = Depends(get_db_session),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict:
     login_value = payload.login.lower().strip()
     user = await session.scalar(
