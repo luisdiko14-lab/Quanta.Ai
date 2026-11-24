@@ -46,7 +46,7 @@ async def chat_completions(
 
     if payload.stream:
         return StreamingResponse(
-            stream_chat(payload),
+            stream_chat(payload, allow_premium=premium_access),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache, no-transform",
@@ -54,4 +54,4 @@ async def chat_completions(
                 "Connection": "keep-alive",
             },
         )
-    return await complete_chat(payload)
+    return await complete_chat(payload, allow_premium=premium_access)
