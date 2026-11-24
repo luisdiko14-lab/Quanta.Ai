@@ -2,7 +2,7 @@
 
 A multi-provider AI workspace built around FastAPI, React, PostgreSQL, Redis and Docker.
 
-**Status:** Foundation + account-session milestone. This branch includes the initial web application, provider configuration, database schema, guest sessions, email/password account endpoints, CSRF protection, local Docker stack and CI. Billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
+**Status:** Foundation, accounts and chat-history milestone. This branch includes the initial web application, provider configuration, database schema, guest sessions, email/password account endpoints, CSRF protection, persistent conversations for signed-in users, local Docker stack and CI. Billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
 
 ## Stack
 - API: Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy 2, Alembic
@@ -33,10 +33,14 @@ Set model IDs only after checking the current provider catalogue:
 - `GET /health/ready` — PostgreSQL and Redis readiness
 - `GET /api/v1/models` — configured public model aliases
 - `GET /api/v1/providers` — provider configuration status, never secrets
-- `POST /api/v1/chat/completions` — OpenAI-style request with SSE streaming
+- `POST /api/v1/chat/completions` — OpenAI-style request with SSE streaming; stores history for signed-in users
+- `GET /api/v1/conversations` — list the current user's saved chats
+- `GET /api/v1/conversations/{id}/messages` — load saved chat messages
+- `PATCH /api/v1/conversations/{id}` — rename a saved chat
+- `DELETE /api/v1/conversations/{id}` — delete a saved chat
 
 ## Security
-Provider credentials remain server-side. Chat requires a guest or user session plus a CSRF token. Passwords use Argon2id, session tokens are opaque and stored in Redis by digest, sessions use HttpOnly cookies, and email verification tokens are single-use and time-limited. Redis rate limiting fails closed, CORS is explicit, API responses include security headers, and schema changes use Alembic. Configure SMTP before production registration is enabled. Do not serve the local storage directory directly.
+Provider credentials remain server-side. Chat requires a guest or user session plus a CSRF token. Passwords use Argon2id, session tokens are opaque and stored in Redis by digest, sessions use HttpOnly cookies, and email verification tokens are single-use and time-limited. Redis rate limiting fails closed, CORS is explicit, API responses include security headers, and schema changes use Alembic. Configure SMTP before production registration is enabled. Saved conversation routes enforce ownership against the authenticated user. Guest sessions remain temporary. Do not serve the local storage directory directly.
 
 ## Checks
 `cd backend && pip install -e ".[dev]" && ruff check app tests && pytest`
