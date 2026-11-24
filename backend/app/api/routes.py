@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -27,7 +29,7 @@ async def list_providers() -> dict:
 )
 async def chat_completions(
     payload: ChatRequest,
-    identity: dict = Depends(require_identity),
+    identity: Annotated[dict, Depends(require_identity)],
 ):
     premium_access = (
         identity.get("role") == "admin"
