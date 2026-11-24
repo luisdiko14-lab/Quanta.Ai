@@ -259,12 +259,15 @@ function App() {
           model,
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           stream: true,
+          conversation_id: conversationId,
         }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail ?? 'Quanta could not reach an AI provider.');
       }
+      const responseConversationId = response.headers.get('X-Conversation-ID');
+      if (responseConversationId) setConversationId(responseConversationId);
       if (!response.body) throw new Error('Streaming is not supported by this connection.');
 
       const reader = response.body.getReader();
@@ -293,6 +296,7 @@ function App() {
       updateAssistant(assistantMessage.id, 'I could not complete that response. Check the API configuration and try again.');
     } finally {
       setStreaming(false);
+      setHistoryVersion((version) => version + 1);
       composerRef.current?.focus();
     }
   };
@@ -440,13 +444,13 @@ function App() {
           <button className="icon-button subtle desktop-only" onClick={() => setSidebarOpen(false)} aria-label="Collapse sidebar"><PanelLeftClose size={18} /></button>
         </div>
 
-        <button className="new-chat-button" onClick={() => { setMessages([]); setDraft(''); setError(''); }}>
+        <button className="new-chat-button" onClick={() => { setMessages([]); setConversationId(null); setDraft(''); setError(''); }}>
           <Plus size={17} /> <span>New conversation</span> <kbd>⌘ K</kbd>
         </button>
 
         <label className="sidebar-search">
           <Search size={15} />
-          <input aria-label="Search conversations" placeholder="Search conversations" />
+          <input aria-label="Search conversations" placeholder="Search conversations" value={conversationSearch} onChange={(event) => setConversationSearch(event.target.value)} />
           <kbd>/</kbd>
         </label>
 
@@ -460,11 +464,21 @@ function App() {
 
         <div className="sidebar-section recent-section">
           <div className="section-heading"><span className="section-label">Recent</span><button className="tiny-icon" aria-label="More conversations" disabled><MoreHorizontal size={16} /></button></div>
-          {starterChats.map((chat) => (
-            <button className="recent-chat" key={chat} onClick={() => { setMessages([]); setDraft('Help me continue: ' + chat); composerRef.current?.focus(); }}>
-              <MessageSquare size={14} /><span>{chat}</span>
+          {filteredConversations.map((conversation) => (
+            <button
+              className={'recent-chat' + (conversation.id === conversationId ? ' selected' : '')}
+              key={conversation.id}
+              onClick={() => void openConversation(conversation)}
+              title={conversation.title}
+            >
+              <MessageSquare size={14} /><span>{conversation.title}</span>
             </button>
           ))}
+          {filteredConversations.length === 0 && (
+            <div className="history-empty">
+              {identity?.kind === 'user' ? 'No saved chats yet.' : 'Sign in to save your chat history.'}
+            </div>
+          )}
         </div>
 
         <div className="sidebar-bottom">
