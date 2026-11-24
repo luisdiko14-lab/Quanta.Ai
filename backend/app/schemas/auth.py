@@ -15,3 +15,12 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str = Field(min_length=20, max_length=256)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+    new_password: str = Field(min_length=12, max_length=128)
