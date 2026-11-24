@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.rate_limit import enforce_rate_limit
 from app.schemas.chat import ChatRequest
-from app.services.ai import complete_chat, public_models, provider_status, stream_chat
+from app.services.ai import complete_chat, provider_status, public_models, stream_chat
 
 router = APIRouter(prefix="/api/v1", tags=["Quanta AI"])
 
