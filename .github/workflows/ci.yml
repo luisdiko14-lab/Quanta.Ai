@@ -29,7 +29,7 @@ jobs:
         run: ruff check app tests
       - name: Test
         working-directory: backend
-        run: pytest -q --fix
+        run: python -m pytest -q
 
   frontend:
     name: Frontend build
