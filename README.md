@@ -2,7 +2,7 @@
 
 A multi-provider AI workspace built around FastAPI, React, PostgreSQL, Redis and Docker.
 
-**Status:** Foundation milestone. This branch adds the initial web application, provider configuration, database schema, local Docker stack and CI. Authentication, billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
+**Status:** Foundation + account-session milestone. This branch includes the initial web application, provider configuration, database schema, guest sessions, email/password account endpoints, CSRF protection, local Docker stack and CI. Billing, administration, uploads and remaining product modules are follow-on milestones and are not claimed as complete.
 
 ## Stack
 - API: Python 3.12, FastAPI, Pydantic Settings, SQLAlchemy 2, Alembic
@@ -26,7 +26,7 @@ Set model IDs only after checking the current provider catalogue:
 - Groq: `GROQ_API_KEY`, `GROQ_MODEL_BUDGET`, `GROQ_MODEL_LLAMA_70B`, `GROQ_MODEL_QWEN`
 - DeepSeek: `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL_CHAT`, `DEEPSEEK_MODEL_REASONER`
 
-`/api/v1/models` lists only aliases with both a model ID and provider key configured. `auto` uses the ordered `AI_FALLBACK_MODELS` setting. The initial chat adapter targets OpenAI-compatible text chat APIs; provider-specific image generation, grounding, audio and code-execution tools need separate adapters.
+`/api/v1/models` lists only aliases with both a model ID and provider key configured. `auto` uses the ordered `AI_FALLBACK_MODELS` setting and excludes Premium-only aliases for guest/free sessions. The initial chat adapter targets OpenAI-compatible text chat APIs; provider-specific image generation, grounding, audio and code-execution tools need separate adapters.
 
 ## API
 - `GET /health/live` — liveness
@@ -36,7 +36,7 @@ Set model IDs only after checking the current provider catalogue:
 - `POST /api/v1/chat/completions` — OpenAI-style request with SSE streaming
 
 ## Security
-Provider credentials remain server-side. Redis rate limiting fails closed, CORS is explicit, API responses include security headers, and schema changes use Alembic. The initial chat route is not yet account-authenticated; do not expose it publicly until the authentication and plan-enforcement milestone is complete. Do not serve the local storage directory directly.
+Provider credentials remain server-side. Chat requires a guest or user session plus a CSRF token. Passwords use Argon2id, session tokens are opaque and stored in Redis by digest, sessions use HttpOnly cookies, and email verification tokens are single-use and time-limited. Redis rate limiting fails closed, CORS is explicit, API responses include security headers, and schema changes use Alembic. Configure SMTP before production registration is enabled. Do not serve the local storage directory directly.
 
 ## Checks
 `cd backend && pip install -e ".[dev]" && ruff check app tests && pytest`
