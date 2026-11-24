@@ -50,6 +50,10 @@ async def create_session(response: Response, identity: dict[str, Any]) -> str:
         json.dumps(payload, separators=(",", ":")),
         ex=SESSION_TTL_SECONDS,
     )
+    if identity.get("user_id"):
+        user_sessions = f"quanta:user-sessions:{identity['user_id']}"
+        await redis_client.sadd(user_sessions, _digest(session_token))
+        await redis_client.expire(user_sessions, SESSION_TTL_SECONDS)
     response.set_cookie(
         SESSION_COOKIE, session_token, max_age=SESSION_TTL_SECONDS,
         httponly=True, secure=_secure_cookie(), samesite="strict", path="/",
@@ -125,11 +129,25 @@ async def require_identity(request: Request) -> dict[str, Any]:
 async def destroy_session(request: Request, response: Response) -> None:
     session = await load_session(request)
     if session:
-        token, _ = session
+        token, identity = session
         await redis_client.delete(_session_key(token))
+        if identity.get("user_id"):
+            user_sessions = f"quanta:user-sessions:{identity['user_id']}"
+            await redis_client.srem(user_sessions, _digest(token))
     response.delete_cookie(
         SESSION_COOKIE, path="/", secure=_secure_cookie(), httponly=True, samesite="strict"
     )
     response.delete_cookie(
         CSRF_COOKIE, path="/", secure=_secure_cookie(), httponly=False, samesite="strict"
     )
+
+
+
+async def revoke_user_sessions(user_id: str) -> None:
+    """Revoke all Redis sessions associated with a user."""
+    user_sessions = f"quanta:user-sessions:{user_id}"
+    session_digests = await redis_client.smembers(user_sessions)
+    if session_digests:
+        keys = [f"quanta:session:{digest}" for digest in session_digests]
+        await redis_client.delete(*keys)
+    await redis_client.delete(user_sessions)
