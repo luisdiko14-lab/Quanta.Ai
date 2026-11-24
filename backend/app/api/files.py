@@ -5,9 +5,9 @@ import re
 import uuid
 import zipfile
 from io import BytesIO
-from urllib.parse import quote
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -45,7 +45,9 @@ def _safe_filename(value: str) -> str:
 def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
     extension = Path(filename).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type: {extension or 'unknown'}")
+        raise HTTPException(
+            status_code=415, detail=f"Unsupported file type: {extension or 'unknown'}"
+        )
     if not data:
         raise HTTPException(status_code=400, detail="Empty files cannot be uploaded.")
 
@@ -57,7 +59,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
         if extension != ".zip":
             with zipfile.ZipFile(BytesIO(data)) as archive:
                 total_uncompressed = sum(info.file_size for info in archive.infolist())
-                oversized_member = any(info.file_size > 50 * 1024 * 1024 for info in archive.infolist())
+                oversized_member = any(
+                    info.file_size > 50 * 1024 * 1024 for info in archive.infolist()
+                )
                 suspicious_ratio = any(
                     info.compress_size > 0 and info.file_size / info.compress_size > 200
                     for info in archive.infolist()
@@ -68,7 +72,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
                     detail="The compressed document expands beyond the safe processing limits.",
                 )
     if extension == ".doc" and not data.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
-        raise HTTPException(status_code=400, detail="The legacy Word document signature is invalid.")
+        raise HTTPException(
+            status_code=400, detail="The legacy Word document signature is invalid."
+        )
     if extension == ".png" and not data.startswith(bytes.fromhex("89504E470D0A1A0A")):
         raise HTTPException(status_code=400, detail="The PNG signature is invalid.")
     if extension in {".jpg", ".jpeg"} and not data.startswith(bytes.fromhex("FFD8FF")):
@@ -94,7 +100,9 @@ def _validate_file(filename: str, data: bytes) -> tuple[str, str]:
                 status_code=400, detail="Text and source files must use UTF-8 encoding."
             ) from exc
         if b"\x00" in data:
-            raise HTTPException(status_code=400, detail="Binary content is not accepted as a text file.")
+            raise HTTPException(
+                status_code=400, detail="Binary content is not accepted as a text file."
+            )
 
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return extension, media_type
@@ -398,11 +406,17 @@ async def download_file(
     except Exception as exc:
         if getattr(exc, "response", {}).get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
             raise HTTPException(status_code=404, detail="Stored file is missing.") from exc
-        raise HTTPException(status_code=503, detail="File storage is temporarily unavailable.") from exc
+        raise HTTPException(
+            status_code=503, detail="File storage is temporarily unavailable."
+        ) from exc
     return Response(
         content=data,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(asset.original_filename)}"},
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{quote(asset.original_filename)}"
+            )
+        },
     )
 
 
