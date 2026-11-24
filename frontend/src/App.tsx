@@ -46,6 +46,13 @@ type Identity = {
   kind: string;
 };
 type AuthMode = 'login' | 'register' | 'verify' | 'forgot' | 'reset' | 'account';
+type ConversationSummary = {
+  id: string;
+  title: string;
+  model: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
 
 const quickPrompts = [
   { icon: Code2, title: 'Build something', detail: 'Turn an idea into clean, working code.' },
@@ -53,8 +60,6 @@ const quickPrompts = [
   { icon: Globe2, title: 'Explore a topic', detail: 'Get a clear explanation and useful next steps.' },
   { icon: WandSparkles, title: 'Create an idea', detail: 'Brainstorm something original and useful.' },
 ];
-
-const starterChats = ['Designing a product roadmap', 'Python async patterns', 'Ideas for a new project'];
 
 function QMark() {
   return <span className="q-mark" aria-hidden="true">Q<span /></span>;
@@ -68,6 +73,10 @@ function App() {
   const [draft, setDraft] = useState('');
   const [model, setModel] = useState('auto');
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState('');
@@ -178,8 +187,51 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (identity?.kind !== 'user') {
+      setConversations([]);
+      return;
+    }
+    let active = true;
+    fetch('/api/v1/conversations', { credentials: 'include' })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload) => {
+        if (active) setConversations(payload.data ?? []);
+      })
+      .catch(() => {
+        if (active) setConversations([]);
+      });
+    return () => { active = false; };
+  }, [identity?.kind, identity?.user_id, historyVersion]);
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, streaming]);
+
+  const openConversation = async (conversation: ConversationSummary) => {
+    if (streaming) return;
+    try {
+      const response = await fetch(
+        `/api/v1/conversations/${conversation.id}/messages`,
+        { credentials: 'include' },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? 'Could not open this conversation.');
+      setConversationId(conversation.id);
+      setModel(conversation.model || 'auto');
+      setMessages((payload.data ?? []).map((message: ChatMessage) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+      })));
+      setError('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not open conversation.');
+    }
+  };
+
+  const filteredConversations = conversations.filter((conversation) =>
+    conversation.title.toLowerCase().includes(conversationSearch.toLowerCase())
+  );
 
   const updateAssistant = (id: string, content: string) => {
     setMessages((current) => current.map((message) => (
