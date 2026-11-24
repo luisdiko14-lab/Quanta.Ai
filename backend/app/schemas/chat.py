@@ -1,4 +1,5 @@
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -13,3 +14,8 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
     stream: bool = True
     temperature: float | None = Field(default=None, ge=0, le=2)
+    conversation_id: UUID | None = None
+
+
+class ConversationTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)

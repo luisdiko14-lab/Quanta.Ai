@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = "Quanta AI"
     app_env: str = "development"
     secret_key: str = "dev-only-change-me"
+    frontend_base_url: str = "http://localhost:5173"
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
     database_url: str = "postgresql+asyncpg://quanta:quanta@localhost:5432/quanta"
     redis_url: str = "redis://localhost:6379/0"
