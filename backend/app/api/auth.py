@@ -2,7 +2,8 @@ import asyncio
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -37,7 +38,7 @@ async def csrf_token(request: Request, response: Response) -> dict[str, str]:
 
 
 @router.get("/me")
-async def me(identity: dict = Depends(require_identity)) -> dict:
+async def me(identity: Annotated[dict, Depends(require_identity)]) -> dict:
     return {
         "authenticated": True,
         "user_id": identity.get("user_id"),
@@ -68,7 +69,7 @@ async def create_guest(response: Response) -> dict[str, str]:
 @router.post("/register", dependencies=[Depends(require_csrf), Depends(enforce_rate_limit)])
 async def register_account(
     payload: RegisterRequest,
-    session: AsyncSession = Depends(get_db_session),
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict:
     if settings.app_env.lower() == "production" and (
         not settings.smtp_host or not settings.smtp_from_email
@@ -161,7 +162,7 @@ async def verify_email(
         await redis_client.delete(redis_key)
         raise HTTPException(status_code=400, detail="Verification link is invalid or expired.")
 
-    user.email_verified_at = datetime.now(timezone.utc)
+    user.email_verified_at = datetime.now(UTC)
     await session.commit()
     await redis_client.delete(redis_key)
     return {
