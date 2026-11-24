@@ -362,3 +362,44 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (hover: none) {
   .recent-actions { opacity: 1; }
 }
+
+
+.hidden-file-input { display: none; }
+.attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 5px 0 10px;
+}
+.attachment-chip {
+  max-width: min(100%, 260px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--muted-2);
+  font-size: 9px;
+  background: var(--panel-soft);
+}
+.attachment-chip > svg { flex: 0 0 auto; color: var(--accent); }
+.attachment-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attachment-chip small { color: var(--muted); }
+.attachment-chip button {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+}
+.attachment-chip button:hover { color: var(--text); background: var(--panel); }
