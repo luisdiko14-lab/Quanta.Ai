@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     deepseek_model_reasoner: str = ""
 
     storage_root: str = "./storage"
+    free_max_upload_size_mb: int = 10
+    premium_max_upload_size_mb: int = 50
     provider_keys_encryption_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
