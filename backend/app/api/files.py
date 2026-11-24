@@ -161,7 +161,10 @@ def _extract_text(extension: str, data: bytes) -> str:
                 info.filename for info in archive.infolist()[:300]
                 if not info.is_dir()
             ]
-        text = "ZIP archive contents (files are listed only; nothing is extracted):\n" + "\n".join(entries)
+        text = (
+            "ZIP archive contents (files are listed only; nothing is extracted):\n"
+            + "\n".join(entries)
+        )
     elif extension == ".doc":
         text = (
             "Legacy .doc file received. This foundation can securely store and download it, "
